@@ -1,0 +1,81 @@
+SELECT PriceList, Seq, Description, G1 + ' ' + P1 AS Item, RatePerA, MinArea,
+CASE
+	WHEN Sp2 = 'Any' THEN 1
+	ELSE 0
+END AS Triple,
+CASE
+	WHEN Sp1 = '' and Sp2 = '' THEN 1
+	ELSE 0
+END AS Single
+INTO #SGPl
+FROM GOPrice1 
+WHERE PriceList = 'CUSTOMER A'
+
+-----------------------------
+
+SELECT *
+INTO #PCosts
+FROM (
+SELECT Code, Text, PG1 + ' ' +  Item as Item, PC1 as Cost FROM GOMatrls WHERE Type = 'P' AND PG1 <> ''
+UNION
+SELECT Code, Text, PG2 + ' ' +  Item as Item, PC2 as Cost FROM GOMatrls WHERE Type = 'P' AND PG2 <> ''
+UNION
+SELECT Code, Text, PG3 + ' ' +  Item as Item, PC3 as Cost FROM GOMatrls WHERE Type = 'P' AND PG3 <> ''
+UNION
+SELECT Code, Text, PG4 + ' ' +  Item as Item, PC4 as Cost FROM GOMatrls WHERE Type = 'P' AND PG4 <> ''
+UNION
+SELECT Code, Text, PG5 + ' ' +  Item as Item, PC5 as Cost FROM GOMatrls WHERE Type = 'P' AND PG5 <> ''
+) as PCosts 
+
+-----------------------------
+
+SELECT o.DocNo, o.OrderNo, o.AccNo, o.Delivered, o.PList, 
+l.Line, l.Width, l.Height, l.Qty, l.G1 + ' ' + l.P1 as GP1, l.G2 + ' ' + l.P2 as GP2, l.G3 + ' ' + l.P3 as GP3, 
+CASE
+	WHEN l.Triple = 1 THEN l.G1 + ' ' + l.P1 + ' / ' + l.G3 + ' ' + l.P3 + ' / ' + l.G2 + ' ' + l.P2
+	WHEN l.Single = 1 THEN l.G1 + ' ' + l.P1
+	ELSE l.G1 + ' ' + l.P1 + ' / ' + l.G2 + ' ' +  l.P2
+END AS UnitMakeup,
+l.Area as UnitArea, 
+l.Area * l.Qty as LineArea,
+G1Pl.MinArea,
+CASE 
+	WHEN l.Area < 0.25 THEN ISNULL(G1Pl.MinArea, 0.25) * Qty
+	ELSE l.Area * Qty
+END AS ChargeableArea,
+l.Single, l.Triple,
+G1Pl.Description as G1_Desc, G1Pl.RatePerA as G1_Rate, G2Pl.Description as G2_Desc, G2Pl.RatePerA as G2_Rate, G3Pl.Description as G3_Desc, G3Pl.RatePerA as G3_Rate,
+ISNULL(G1Pl.RatePerA, 0) + ISNULL(G2Pl.RatePerA, 0) + ISNULL(G3Pl.RatePerA, 0) as UnitRate,
+G1Cost.Cost as G1Cost, G2Cost.Cost as G2Cost, G3Cost.Cost as G3Cost,
+ISNULL(G1Cost.Cost, 0) + ISNULL(G2Cost.Cost, 0) + ISNULL(G3Cost.Cost, 0) as UnitCost
+INTO #OrderLines
+FROM GOOrders o
+INNER JOIN GOLines l on o.DocNo = l.DocNo
+LEFT OUTER JOIN #SGPl G1Pl on l.G1 + ' ' + l.P1 = G1Pl.Item and G1Pl.Single = l.Single and G1Pl.Triple = l.Triple
+LEFT OUTER JOIN #SGPl G2Pl on l.G2 + ' ' + l.P2 = G2Pl.Item and G2Pl.Single = l.Single and G2Pl.Triple = l.Triple
+LEFT OUTER JOIN #SGPl G3Pl on l.G3 + ' ' + l.P3 = G3Pl.Item and G3Pl.Single = l.Single and G3Pl.Triple = l.Triple
+LEFT OUTER JOIN #PCosts G1Cost on l.G1 + ' ' + l.P1 = G1Cost.Item
+LEFT OUTER JOIN #PCosts G2Cost on l.G2 + ' ' + l.P2 = G2Cost.Item
+LEFT OUTER JOIN #PCosts G3Cost on l.G3 + ' ' + l.P3 = G3Cost.Item
+WHERE o.PList like 'CUSTOMER A%' AND o.DocNo > 0 and o.State != 'Q' and l.NonGlass = 0 and o.Ordered >= '2019.01.01' and o.Ordered < '2019.08.19'
+ORDER BY OrderNo asc, Line asc
+
+-----------------------------
+
+SELECT * FROM #OrderLines
+
+SELECT UnitMakeup,
+SUM(Qty) as Qty,
+SUM(UnitArea) as ActualArea,
+SUM(ChargeableArea) as ChargeableArea,
+UnitRate,
+UnitCost,
+SUM(ChargeableArea) * UnitRate as TotalUnitPrice,
+SUM(LineArea) * UnitCost as TotalUnitCost
+FROM #OrderLines
+GROUP BY UnitMakeup, UnitRate, UnitCost
+ORDER BY SUM(Qty) DESC
+
+DROP TABLE #OrderLines
+DROP TABLE #PCosts
+DROP TABLE #SGPl
